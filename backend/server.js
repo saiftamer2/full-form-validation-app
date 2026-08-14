@@ -2,25 +2,45 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
+const fs = require("fs");
 
 const app = express();
-const PORT = 5000;
 
 app.use(cors());
 app.use(express.json());
 
+// ====================
+// Upload Directory
+// ====================
+
+const uploadDirectory = "/tmp/uploads";
+
+if (!fs.existsSync(uploadDirectory)) {
+  fs.mkdirSync(uploadDirectory, { recursive: true });
+}
+
+// ====================
+// Multer Storage
+// ====================
+
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, "uploads/");
+    cb(null, uploadDirectory);
   },
 
   filename: function (req, file, cb) {
     const uniqueName =
-      Date.now() + "-" + file.originalname.replace(/\s+/g, "-");
+      Date.now() +
+      "-" +
+      file.originalname.replace(/\s+/g, "-");
 
     cb(null, uniqueName);
   },
 });
+
+// ====================
+// Multer Configuration
+// ====================
 
 const upload = multer({
   storage: storage,
@@ -39,12 +59,37 @@ const upload = multer({
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error("Only JPG and PNG images are allowed."));
+      cb(
+        new Error(
+          "Only JPG and PNG images are allowed."
+        )
+      );
     }
   },
 });
 
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// ====================
+// Static Uploaded Files
+// ====================
+
+app.use(
+  "/uploads",
+  express.static(uploadDirectory)
+);
+
+// ====================
+// Home Route
+// ====================
+
+app.get("/", (req, res) => {
+  res.json({
+    message: "Form validation backend is running.",
+  });
+});
+
+// ====================
+// Form Validation
+// ====================
 
 function validateForm(data) {
   const errors = {};
@@ -61,19 +106,26 @@ function validateForm(data) {
   if (!fullName || fullName.trim() === "") {
     errors.fullName = "Full name is required.";
   } else if (fullName.trim().length < 3) {
-    errors.fullName = "Full name must be at least 3 characters.";
+    errors.fullName =
+      "Full name must be at least 3 characters.";
   }
 
   if (!email || email.trim() === "") {
     errors.email = "Email is required.";
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    errors.email = "Please enter a valid email address.";
+  } else if (
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  ) {
+    errors.email =
+      "Please enter a valid email address.";
   }
 
   if (!phone || phone.trim() === "") {
     errors.phone = "Phone number is required.";
-  } else if (!/^[0-9+\-\s]{8,15}$/.test(phone)) {
-    errors.phone = "Please enter a valid phone number.";
+  } else if (
+    !/^[0-9+\-\s]{8,15}$/.test(phone)
+  ) {
+    errors.phone =
+      "Please enter a valid phone number.";
   }
 
   if (!jobTitle || jobTitle.trim() === "") {
@@ -82,80 +134,129 @@ function validateForm(data) {
 
   if (!gender) {
     errors.gender = "Please select a gender.";
-  } else if (!["male", "female", "other"].includes(gender)) {
-    errors.gender = "Please select a valid gender.";
+  } else if (
+    !["male", "female", "other"].includes(gender)
+  ) {
+    errors.gender =
+      "Please select a valid gender.";
   }
 
   if (!dateOfBirth) {
-    errors.dateOfBirth = "Date of birth is required.";
-  } else if (new Date(dateOfBirth) > new Date()) {
-    errors.dateOfBirth = "Date of birth cannot be in the future.";
+    errors.dateOfBirth =
+      "Date of birth is required.";
+  } else if (
+    new Date(dateOfBirth) > new Date()
+  ) {
+    errors.dateOfBirth =
+      "Date of birth cannot be in the future.";
   }
 
   return errors;
 }
 
-app.post("/api/applications", upload.single("profileImage"), (req, res) => {
-  try {
-    const errors = validateForm(req.body);
+// ====================
+// Submit Application
+// ====================
 
-    if (!req.file) {
-      errors.profileImage = "Profile image is required.";
+app.post(
+  "/api/applications",
+  upload.single("profileImage"),
+  (req, res) => {
+    try {
+      const errors = validateForm(req.body);
+
+      if (!req.file) {
+        errors.profileImage =
+          "Profile image is required.";
+      }
+
+      if (Object.keys(errors).length > 0) {
+        return res.status(400).json({
+          message:
+            "Please fix the validation errors.",
+          errors,
+        });
+      }
+
+      const application = {
+        id: Date.now(),
+        fullName: req.body.fullName.trim(),
+        email: req.body.email.trim(),
+        phone: req.body.phone.trim(),
+        jobTitle: req.body.jobTitle.trim(),
+        gender: req.body.gender,
+        dateOfBirth: req.body.dateOfBirth,
+        profileImage: req.file.filename,
+        imageUrl:
+          `/uploads/${req.file.filename}`,
+      };
+
+      console.log(
+        "Application submitted:",
+        application
+      );
+
+      res.status(201).json({
+        message:
+          "Application submitted successfully!",
+        application,
+      });
+
+    } catch (error) {
+      console.error(
+        "Application error:",
+        error
+      );
+
+      res.status(500).json({
+        message:
+          "Server error. Please try again.",
+      });
     }
+  }
+);
 
-    if (Object.keys(errors).length > 0) {
+// ====================
+// Multer Error Handler
+// ====================
+
+app.use(
+  (error, req, res, next) => {
+    if (error instanceof multer.MulterError) {
+
+      if (
+        error.code === "LIMIT_FILE_SIZE"
+      ) {
+        return res.status(400).json({
+          message:
+            "Image must be smaller than 5 MB.",
+        });
+      }
+
       return res.status(400).json({
-        message: "Please fix the validation errors.",
-        errors,
+        message: error.message,
       });
     }
 
-    const application = {
-      id: Date.now(),
-      fullName: req.body.fullName.trim(),
-      email: req.body.email.trim(),
-      phone: req.body.phone.trim(),
-      jobTitle: req.body.jobTitle.trim(),
-      gender: req.body.gender,
-      dateOfBirth: req.body.dateOfBirth,
-      profileImage: req.file.filename,
-    };
+    if (
+      error.message ===
+      "Only JPG and PNG images are allowed."
+    ) {
+      return res.status(400).json({
+        message: error.message,
+      });
+    }
 
-    console.log("Application submitted:", application);
-
-    res.status(201).json({
-      message: "Application submitted successfully!",
-      application,
-    });
-  } catch (error) {
-    console.error(error);
+    console.error("Server error:", error);
 
     res.status(500).json({
-      message: "Server error. Please try again.",
+      message: "Something went wrong.",
     });
   }
-});
+);
 
-app.use((error, req, res, next) => {
-  if (error instanceof multer.MulterError) {
-    if (error.code === "LIMIT_FILE_SIZE") {
-      return res.status(400).json({
-        message: "Image must be smaller than 5 MB.",
-      });
-    }
-  }
+// ====================
+// Export for Vercel
+// ====================
 
-  if (error.message === "Only JPG and PNG images are allowed.") {
-    return res.status(400).json({
-      message: error.message,
-    });
-  }
-
-  res.status(500).json({
-    message: "Something went wrong.",
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+module.exports = app;
